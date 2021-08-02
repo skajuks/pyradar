@@ -4,8 +4,11 @@ import pymem.process
 import pygame as pg
 import os
 import time
+import struct
 import pathlib
 from fetch_offsets_to_dict import fetchOffsets
+from structs import *
+
 
 # fetch offsets from hazeddumper
 offsets = fetchOffsets(1) # 0 -> debug off
@@ -20,20 +23,6 @@ try:
 except:
     print(f"[Error] cannot find process handle for {process_name}, check if {game_name} is running")
     sys.exit() # terminate script if no process if found
-
-def VECTOR3(localPlayer):
-    return {
-        "x" : round(float(memory.read_float(localPlayer + int(offsets["m_vecOrigin"], 16))), 2),
-        "y" : round(float(memory.read_float(localPlayer + int(offsets["m_vecOrigin"], 16) + 4)), 2),  #   add 4 bytes for next value
-        "z" : float(0) #	leave z empty for now, because 2D pos logging is used
-    }
-
-def healthToColor(health):
-    return (int(round(255 - (health * 2.55))), int(round(health * 2.55)), 0)
-
-def getPlayerName(i, items):
-    name = memory.read_string(memory.read_int((items + 0x28) + (i * 0x34)) + 0x10)
-    return str(name)
 
 weapon_list = {
     1: "Desert Eagle",
@@ -106,6 +95,18 @@ weapon_list = {
     85: "Bump Mine"
 }
 
+ci = [ClientInfo() for _ in range(64)]
+e = [Entity() for _ in range(64)]
+
+def healthToColor(health):
+    return (int(round(255 - (health * 2.55))), int(round(health * 2.55)), 0)
+
+def getPlayerName(i):
+    playerinfo = memory.read_int(memory.read_int(engineModule + int(offsets["dwClientState"], 16)) + int(offsets["dwClientState_PlayerInfo"], 16))
+    playerinfo_items = memory.read_int(memory.read_int(playerinfo + 0x40) + 0xC)
+    name = memory.read_string(memory.read_int((playerinfo_items + 0x28) + (i * 0x34)) + 0x10)
+    return str(name)
+
 def getWeaponName(index):
     print(index)
     for key, value in weapon_list.items():
@@ -113,77 +114,57 @@ def getWeaponName(index):
             return value
     return "Unknown"       
 
+def VECTOR3(arr): # redo
+    vector_base = int(offsets["m_vecOrigin"], 16)
+    return {
+        "x" : round(float(struct.unpack('<f', bytearray(arr[vector_base:vector_base + 4]))[0]), 2),
+        "y" : round(float(struct.unpack('<f', bytearray(arr[vector_base + 4:vector_base + 8]))[0]), 2),  #   add 4 bytes for next value
+        "z" : float(0) #	leave z empty for now, because 2D pos logging is used
+    }
+
+def vectorToScreen(vector):
+    vector["x"] = (vector["x"] + 1838) / 4.1
+    vector["y"] = (vector["y"] - 1858) / 4.1
+
+def drawCircleWithOutline(screen, color, x ,y):
+    pg.draw.circle(screen, (0,0,0), [x, abs(y)], 10)
+    pg.draw.circle(screen, color, [x, abs(y)], 8) 
 class Radar:
     def __init__(self):
         pg.init()
         pg.display.set_caption("chadys external python radar")
         self.screen = pg.display.set_mode((1024, 1024))
         self.run_radar = True
+        self.localPlayerAddrOffset = 0
+        self.localPlayerByteArray = 0
         self.load_radar_image()
 
     def run(self):
-        self.update()
+        self.update_2()
         self.draw()
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 pg.quit()
                 sys.exit()
 
-    def update(self):
+    def update_2(self):
         self.screen.blit(self.office_radar, [0,0])
-
-        self.localPlayer = memory.read_int(gameModule + int(offsets["dwLocalPlayer"], 16)) # read localplayer offset
-
-        self.localPlayer_health = memory.read_int(self.localPlayer + int(offsets["m_iHealth"], 16))
-
-        if(self.localPlayer_health > 0): # if player is alive
-
-            self.playerinfo = memory.read_int(memory.read_int(engineModule + int(offsets["dwClientState"], 16)) + int(offsets["dwClientState_PlayerInfo"], 16))
-            self.playerinfo_items = memory.read_int(memory.read_int(self.playerinfo + 0x40) + 0xC)
-            self.localplayer_vecOrigin = VECTOR3(self.localPlayer)
-
-            self.localplayer_team = memory.read_int(self.localPlayer + int(offsets["m_iTeamNum"], 16))
-            
-            self.localplayer_vecOrigin["x"] = (self.localplayer_vecOrigin["x"] + 1838) / 4.1
-            self.localplayer_vecOrigin["y"] = (self.localplayer_vecOrigin["y"] - 1858) / 4.1
-
-            for entity in range(32):    # loop trough entities
-                try:
-                    player_entity = memory.read_int(gameModule + int(offsets["dwEntityList"], 16) + entity * 0x10)
-
-                    player_entity_health = memory.read_int(player_entity + int(offsets["m_iHealth"], 16))
-
-                    if(player_entity_health > 0):
-
-                        player_entity_vecOrigin = VECTOR3(player_entity)
-
-                        player_entity_vecOrigin["x"] = (player_entity_vecOrigin["x"] + 1838) / 4.1
-                        player_entity_vecOrigin["y"] = (player_entity_vecOrigin["y"] - 1858) / 4.1
-
-                        player_entity_team = memory.read_int(player_entity + int(offsets["m_iTeamNum"], 16))
-                        player_name = getPlayerName(entity, self.playerinfo_items)
-                        
-                        if(player_entity_team == self.localplayer_team):
-                            pg.draw.circle(self.screen, (0,0,0), [player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"])], 10)
-                            pg.draw.circle(self.screen, (40,0,255), [player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"])], 8)
-                        else:
-                            weapon_id = memory.read_int(player_entity + int(offsets["m_hActiveWeapon"], 16))
-                            weapon_entity = memory.read_int(int(offsets["dwEntityList"], 16) + ((weapon_id & 0xFFF) - 1) * 0x10)
-                            if(weapon_entity):
-                                weapon_id_n = memory.read_int(weapon_entity + int(offsets["m_iItemDefinitionIndex"], 16))
-                                weapon_name = getWeaponName(weapon_id_n)
-                                print(weapon_id_n)
-                                self.draw_text(weapon_name, 10, (255,255,255), player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"]) + 15)
-
-                            color = healthToColor(player_entity_health)
-                            pg.draw.circle(self.screen, (0,0,0), [player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"])], 10)
-                            pg.draw.circle(self.screen, color, [player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"])], 8) 
-                        self.draw_text(player_name, 10, (255,255,255), player_entity_vecOrigin["x"], abs(player_entity_vecOrigin["y"]) - 25)          
-                except:
-                    pass
-
-                pg.draw.circle(self.screen, (0,0,0), [self.localplayer_vecOrigin["x"], abs(self.localplayer_vecOrigin["y"])], 10)
-                pg.draw.circle(self.screen, (255,0,120), [self.localplayer_vecOrigin["x"], abs(self.localplayer_vecOrigin["y"])], 8)
+        entityIndex = 0
+        localPlayer_team = memory.read_int(memory.read_int(gameModule + int(offsets["dwLocalPlayer"], 16)) + int(offsets["m_iTeamNum"], 16))
+        while True:
+            if(entityIndex >= 64): break # ensure that we dont go pass 64 entities
+            ci[entityIndex].entity = memory.read_int(gameModule + int(offsets["dwEntityList"], 16) + entityIndex * 0x10)
+            if(ci[entityIndex].entity == 0): break
+            EntityObject = memory.read_bytes(ci[entityIndex].entity, 400)
+            e[entityIndex].health = EntityObject[int(offsets["m_iHealth"], 16)]
+            e[entityIndex].team = EntityObject[int(offsets["m_iTeamNum"], 16)]
+            e[entityIndex].vecOrigin = VECTOR3(EntityObject)
+            vectorToScreen(e[entityIndex].vecOrigin)
+            if(e[entityIndex].health > 0):
+                if(e[entityIndex].team == localPlayer_team):
+                    drawCircleWithOutline(self.screen, (0,255,255),e[entityIndex].vecOrigin["x"], e[entityIndex].vecOrigin["y"])
+                else: drawCircleWithOutline(self.screen, (255,0,40),e[entityIndex].vecOrigin["x"], e[entityIndex].vecOrigin["y"])     
+            entityIndex +=1
 
     def draw(self):
         pg.display.flip()
@@ -200,7 +181,8 @@ class Radar:
         self.screen.blit(text_surface, text_rect)
 
 r = Radar()
-while r.run_radar:
+
+while r.run_radar: 
     r.run()
     time.sleep(0.1)
 
