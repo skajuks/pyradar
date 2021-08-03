@@ -16,6 +16,9 @@ offsets = fetchOffsets(1) # 0 -> debug off
 process_name = "csgo.exe"
 game_name = "Counter-Strike: Global Offensive"
 
+d_counter_terrorist_team = 3
+d_terrorist_team = 2
+
 try:
     memory = pymem.Pymem(process_name)  # get process handle
     gameModule = pymem.process.module_from_name(memory.process_handle, "client.dll").lpBaseOfDll
@@ -112,7 +115,7 @@ def getWeaponName(index):
     for key, value in weapon_list.items():
         if index == key:
             return value
-    return "Unknown"       
+    return "Unknown"
 
 def VECTOR3(arr): # redo
     vector_base = int(offsets["m_vecOrigin"], 16)
@@ -128,42 +131,48 @@ def vectorToScreen(vector):
 
 def drawCircleWithOutline(screen, color, x ,y):
     pg.draw.circle(screen, (0,0,0), [x, abs(y)], 10)
-    pg.draw.circle(screen, color, [x, abs(y)], 8) 
+    pg.draw.circle(screen, color, [x, abs(y)], 8)
 class Radar:
     def __init__(self):
         pg.init()
         pg.display.set_caption("chadys external python radar")
         self.screen = pg.display.set_mode((1024, 1024))
         self.run_radar = True
-        self.localPlayerAddrOffset = 0
-        self.localPlayerByteArray = 0
         self.load_radar_image()
 
     def run(self):
-        self.update_2()
+        self.update_radar_info()
         self.draw()
         for event in pg.event.get():
             if event.type == pg.QUIT:
                 pg.quit()
                 sys.exit()
 
-    def update_2(self):
+    def update_radar_info(self):
+
+        # add eye angles to draw line where player is looking
+
+
+
         self.screen.blit(self.office_radar, [0,0])
         entityIndex = 0
-        localPlayer_team = memory.read_int(memory.read_int(gameModule + int(offsets["dwLocalPlayer"], 16)) + int(offsets["m_iTeamNum"], 16))
         while True:
-            if(entityIndex >= 64): break # ensure that we dont go pass 64 entities
+            if(entityIndex >= 64):
+                 break # ensure that we dont go pass 64 entities
             ci[entityIndex].entity = memory.read_int(gameModule + int(offsets["dwEntityList"], 16) + entityIndex * 0x10)
-            if(ci[entityIndex].entity == 0): break
+            if(ci[entityIndex].entity == 0): 
+                break  # break if cannot find next entity
             EntityObject = memory.read_bytes(ci[entityIndex].entity, 400)
             e[entityIndex].health = EntityObject[int(offsets["m_iHealth"], 16)]
             e[entityIndex].team = EntityObject[int(offsets["m_iTeamNum"], 16)]
             e[entityIndex].vecOrigin = VECTOR3(EntityObject)
             vectorToScreen(e[entityIndex].vecOrigin)
             if(e[entityIndex].health > 0):
-                if(e[entityIndex].team == localPlayer_team):
+                if(e[entityIndex].team == d_counter_terrorist_team):
                     drawCircleWithOutline(self.screen, (0,255,255),e[entityIndex].vecOrigin["x"], e[entityIndex].vecOrigin["y"])
-                else: drawCircleWithOutline(self.screen, (255,0,40),e[entityIndex].vecOrigin["x"], e[entityIndex].vecOrigin["y"])     
+                else: 
+                    drawCircleWithOutline(self.screen, (255,0,40),e[entityIndex].vecOrigin["x"], e[entityIndex].vecOrigin["y"])
+                    self.draw_text(getPlayerName(entityIndex), 10, (255,255,255), e[entityIndex].vecOrigin["x"], abs(e[entityIndex].vecOrigin["y"] - 10))  
             entityIndex +=1
 
     def draw(self):
